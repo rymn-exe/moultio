@@ -55,6 +55,8 @@ const COLORS = [
     0x00CED1  // Dark Turquoise
 ];
 
+const GAME_VERSION = '0.1.0';
+
 // Initialize game
 window.onload = function() {
     console.log('Starting game initialization');
