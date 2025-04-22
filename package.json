@@ -1,0 +1,20 @@
+{
+  "name": "moultio",
+  "version": "1.0.0",
+  "description": "A multiplayer .io game",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "express": "^5.1.0",
+    "phaser": "^3.88.2",
+    "socket.io": "^4.8.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.9"
+  }
+}
