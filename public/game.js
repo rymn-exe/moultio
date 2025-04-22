@@ -38,9 +38,13 @@ let pointer;
 const PLAYER_SPEED = 400; // Base speed for lerping
 const LERP_FACTOR = 0.1; // How smoothly to follow the mouse (0-1)
 let husksCreated = 0; // Track number of husks created
-const BASE_MOULT_THRESHOLD = 5;
+const BASE_MOULT_THRESHOLD = 20; // Change from 5 to 20
+const STANDARD_SPEED = 200; // New constant for standardized speed
 let kills = 0;
 let score = 0;
+const TOTAL_ORBS = 50; // Constant number of orbs to maintain
+const TOTAL_BOTS = 15; // Constant number of bots to maintain
+let botRespawnTimer = null; // Timer for bot respawn cooldown
 
 const COLORS = [
     0xFF69B4, // Hot Pink
@@ -55,7 +59,14 @@ const COLORS = [
     0x00CED1  // Dark Turquoise
 ];
 
-const GAME_VERSION = '0.1.0';
+const GAME_VERSION = '1.1.0';
+
+const BOT_NAMES = [
+    'xXDarkLordXx', 'ProGamer123', 'NoobMaster69', 'CoolKid2024', 
+    'GamerGirl', 'EpicPlayer', 'SweatyTryhard', 'CasualGamer',
+    'BlobMaster', 'MoultKing', 'SlitherPro', 'AgarioVet',
+    'IoMaster', 'BlobLegend', 'MoultMe', 'OrbCollector'
+];
 
 // Initialize game
 window.onload = function() {
@@ -105,42 +116,40 @@ function create() {
         }
     });
 
-    // Replace meter code with simpler version
+    // Replace meter code with visual fill meter
     const meterWidth = 200;
     const meterHeight = 30;
     const meterX = 16;
     const meterY = 16;
 
-    // Create meter background
-    this.meterBg = this.add.container(meterX, meterY).setScrollFactor(0);
-    
-    // Bug body (main rectangle)
-    this.add.rectangle(0, 0, meterWidth - 20, meterHeight, 0x444444, 1)
+    // Create meter background (darker)
+    this.meterBg = this.add.rectangle(meterX, meterY, meterWidth, meterHeight, 0x222222)
         .setOrigin(0, 0)
-        .setScrollFactor(0);
-    
-    // Create fill meter
-    this.meterFill = this.add.rectangle(meterX, meterY, 0, meterHeight, 0x666666, 1)
+        .setScrollFactor(0)
+        .setStrokeStyle(2, 0x444444);
+
+    // Create fill meter with player's color
+    this.meterFill = this.add.rectangle(meterX + 2, meterY + 2, 0, meterHeight - 4, player.color)
         .setOrigin(0, 0)
         .setScrollFactor(0);
 
     // Store reference to width for calculations
     this.meterWidth = meterWidth;
 
-    // Add text label
-    moultMeterText = this.add.text(meterX + meterWidth/2, meterY + meterHeight/2, '', {
-        fontSize: '16px',
+    // Add "MOULT" label above meter
+    this.moultLabel = this.add.text(meterX + meterWidth/2, meterY - 10, 'MOULT', {
+        fontSize: '14px',
         fill: '#ffffff',
-        fontFamily: 'Arial Black'
-    }).setScrollFactor(0).setOrigin(0.5);
+        fontFamily: 'sans-serif'
+    }).setScrollFactor(0).setOrigin(0.5, 1);
 
     // Create orbs
     for (let i = 0; i < 50; i++) {
         createOrb(this);
     }
 
-    // Create bots
-    for (let i = 0; i < 5; i++) {
+    // Create initial bots
+    for (let i = 0; i < TOTAL_BOTS; i++) {
         createBot(this);
     }
 
@@ -151,10 +160,11 @@ function create() {
         }
     });
 
-    // Add score display
-    this.scoreText = this.add.text(16, 50, 'Kills: 0', {
+    // Update score display font
+    this.scoreText = this.add.text(16, meterY + meterHeight + 10, 'Kills: 0', {
         fontSize: '24px',
-        fill: '#ffffff'
+        fill: '#ffffff',
+        fontFamily: 'sans-serif'
     }).setScrollFactor(0);
 }
 
@@ -230,8 +240,9 @@ function createPlayerHusk(x, y) {
     husks.push(husk);
     husksCreated++;
 
+    // Only add botHitHusk overlap
     bots.forEach(bot => {
-        this.physics.add.overlap(bot, husk, killBot, null, this);
+        this.physics.add.overlap(bot, husk, botHitHusk, null, this);
     });
 }
 
@@ -241,8 +252,6 @@ function createBotHusk(x, y, bot) {
     
     // Main body
     const body = scene.add.circle(0, 0, 32, color);
-    
-    // Single subtle glow layer for bot husks (no pulse)
     const glow = scene.add.circle(0, 0, 36, color, 0.2);
     
     husk.add([glow, body]);
@@ -252,17 +261,33 @@ function createBotHusk(x, y, bot) {
     husk.body.offset.y = -32;
     
     husk.isBotHusk = true;
+    husk.originalBot = bot;
     husks.push(husk);
 
+    // Add collision with player
     scene.physics.add.overlap(player, husk, checkPlayerDeath, null, scene);
+    
+    // Add collision with other bots
+    bots.forEach(otherBot => {
+        if (otherBot !== bot) { // Don't collide with creating bot
+            scene.physics.add.overlap(otherBot, husk, botHitHusk, null, scene);
+        }
+    });
 }
 
 function gameOverScreen() {
     if (!gameOver) {
         gameOver = true;
         
+        // Remove all player husks
+        const playerHusks = husks.filter(h => h.isPlayerHusk);
+        playerHusks.forEach(h => {
+            h.destroy();
+            husks = husks.filter(husk => husk !== h);
+        });
+
         // Calculate final score
-        score = husksCreated + (3 * kills);
+        score = husksCreated + kills;
         
         // Stop all bot movement
         bots.forEach(bot => {
@@ -271,25 +296,28 @@ function gameOverScreen() {
             }
         });
 
-        // Create game over text
+        // Update fonts for all text
         const gameOverText = scene.add.text(scene.cameras.main.centerX, scene.cameras.main.centerY - 100, 'GAME OVER', {
             fontSize: '64px',
-            fill: '#ff0000'
+            fill: '#ff0000',
+            fontFamily: 'sans-serif',
+            fontWeight: 'bold'
         }).setScrollFactor(0).setOrigin(0.5);
         
-        // Add score breakdown
         const scoreText = scene.add.text(scene.cameras.main.centerX, scene.cameras.main.centerY, 
             `Final Score: ${score}\n` +
             `Moults: ${husksCreated}\n` +
-            `Kills: ${kills} (x3)`, {
+            `Kills: ${kills}`, {
             fontSize: '32px',
             fill: '#ffffff',
+            fontFamily: 'sans-serif',
             align: 'center'
         }).setScrollFactor(0).setOrigin(0.5);
         
         restartText = scene.add.text(scene.cameras.main.centerX, scene.cameras.main.centerY + 100, 'Press SPACE to restart', {
             fontSize: '32px',
-            fill: '#ffffff'
+            fill: '#ffffff',
+            fontFamily: 'sans-serif'
         }).setScrollFactor(0).setOrigin(0.5);
         
         // Create a new keyboard listener for restart
@@ -329,8 +357,7 @@ function gameOverScreen() {
 function update() {
     if (gameOver) return;
 
-    // Player movement with inertia
-    const speed = 200;
+    // Player movement with inertia using standardized speed
     const acceleration = 20;
     
     // Apply acceleration based on key press
@@ -347,14 +374,14 @@ function update() {
         player.body.velocity.y += acceleration;
     }
 
-    // Cap maximum speed
+    // Cap maximum speed at STANDARD_SPEED
     const currentSpeed = Math.sqrt(
         player.body.velocity.x * player.body.velocity.x + 
         player.body.velocity.y * player.body.velocity.y
     );
     
-    if (currentSpeed > speed) {
-        const scale = speed / currentSpeed;
+    if (currentSpeed > STANDARD_SPEED) {
+        const scale = STANDARD_SPEED / currentSpeed;
         player.body.velocity.x *= scale;
         player.body.velocity.y *= scale;
     }
@@ -407,15 +434,32 @@ function createOrb(scene) {
 function createBot(scene) {
     const x = Phaser.Math.Between(50, WORLD_WIDTH - 50);
     const y = Phaser.Math.Between(50, WORLD_HEIGHT - 50);
-    // Use random color instead of hardcoded red
-    const bot = createBlob(scene, x, y);
+    
+    // Get a random color that's not currently in use
+    let availableColors = [...COLORS];
+    bots.forEach(existingBot => {
+        availableColors = availableColors.filter(color => color !== existingBot.color);
+    });
+    
+    // If all colors are used, just pick a random one
+    const color = availableColors.length > 0 ? 
+        availableColors[Phaser.Math.Between(0, availableColors.length - 1)] : 
+        COLORS[Phaser.Math.Between(0, COLORS.length - 1)];
+    
+    const bot = createBlob(scene, x, y, color);
+    
+    bot.playerName = BOT_NAMES[Phaser.Math.Between(0, BOT_NAMES.length - 1)];
     
     scene.physics.add.collider(bot, bots);
     scene.physics.add.collider(bot, player);
     
+    // Add collision with existing husks
     husks.forEach(husk => {
+        if (husk.isBotHusk && husk.originalBot !== bot) {
+            scene.physics.add.overlap(bot, husk, botHitHusk, null, scene);
+        }
         if (husk.isPlayerHusk) {
-            scene.physics.add.overlap(bot, husk, killBot, null, scene);
+            scene.physics.add.overlap(bot, husk, botHitHusk, null, scene);
         }
     });
     
@@ -426,7 +470,6 @@ function createBot(scene) {
 }
 
 function collectOrb(player, orb) {
-    // Play collection animation
     scene.tweens.add({
         targets: orb,
         scaleX: 0,
@@ -435,49 +478,15 @@ function collectOrb(player, orb) {
         duration: 150,
         onComplete: () => {
             orb.destroy();
+            // Remove from array first
+            orbs = orbs.filter(o => o !== orb);
+            // Then create new orb to maintain count
             createOrb(scene);
         }
     });
     
     moultMeter++;
     updateMoultMeterText();
-    orbs = orbs.filter(o => o !== orb);
-}
-
-function killBot(bot, husk) {
-    if (husk.isPlayerHusk) {
-        // Visual effect for kill
-        scene.tweens.add({
-            targets: bot,
-            alpha: 0,
-            scale: 0,
-            duration: 200,
-            onComplete: () => {
-                bot.destroy();
-                bots = bots.filter(b => b !== bot);
-                createBot(scene);
-            }
-        });
-        
-        // Increment kills
-        kills++;
-        
-        // Optional: Add kill indicator
-        const killText = scene.add.text(bot.x, bot.y, '+3', {
-            fontSize: '24px',
-            fill: '#ff0000'
-        }).setOrigin(0.5);
-        
-        scene.tweens.add({
-            targets: killText,
-            y: bot.y - 50,
-            alpha: 0,
-            duration: 1000,
-            onComplete: () => killText.destroy()
-        });
-        
-        updateScoreDisplay();
-    }
 }
 
 function checkPlayerDeath(player, husk) {
@@ -496,30 +505,47 @@ function updateBots() {
             createBotHusk(bot.x, bot.y, bot);
         }
         
-        const speed = 100;
+        // Use standardized speed for bots
         bot.body.setVelocity(
-            Math.cos(bot.direction * Math.PI / 180) * speed,
-            Math.sin(bot.direction * Math.PI / 180) * speed
+            Math.cos(bot.direction * Math.PI / 180) * STANDARD_SPEED,
+            Math.sin(bot.direction * Math.PI / 180) * STANDARD_SPEED
         );
     });
 }
 
-// Simplify the update meter function
+// Update the moult meter display function
 function updateMoultMeterText() {
     const currentThreshold = Math.floor(BASE_MOULT_THRESHOLD * (1 + (husksCreated * 0.1)));
-    const fillWidth = (moultMeter / currentThreshold) * (this.meterWidth - 20);
+    const fillPercentage = Math.min(moultMeter / currentThreshold, 1);
+    const fillWidth = fillPercentage * (scene.meterWidth - 4);
     const isReady = moultMeter >= currentThreshold;
     
-    // Update fill color and width
-    if (this.meterFill) {
-        this.meterFill.setFillStyle(isReady ? player.color : 0x666666);
-        this.meterFill.width = fillWidth;
+    // Ensure we're updating the correct meter fill
+    if (scene.meterFill) {
+        // Set the width directly instead of tweening
+        scene.meterFill.width = fillWidth;
+        scene.meterFill.setFillStyle(player.color);
+        
+        // Pulse effect when ready
+        if (isReady && !scene.meterFill.isFlashing) {
+            scene.meterFill.isFlashing = true;
+            scene.tweens.add({
+                targets: scene.meterFill,
+                alpha: 0.7,
+                duration: 600,
+                yoyo: true,
+                repeat: -1,
+                ease: 'Sine.easeInOut'
+            });
+        } else if (!isReady && scene.meterFill.isFlashing) {
+            scene.meterFill.isFlashing = false;
+            scene.meterFill.alpha = 1;
+            scene.tweens.killTweensOf(scene.meterFill);
+        }
     }
 
-    // Update text
-    if (moultMeterText) {
-        moultMeterText.setText(`${moultMeter}/${currentThreshold}`);
-        moultMeterText.setColor(isReady ? '#ffffff' : '#999999');
+    if (scene.moultLabel) {
+        scene.moultLabel.setAlpha(isReady ? 1 : 0.5);
     }
 }
 
@@ -527,5 +553,92 @@ function updateMoultMeterText() {
 function updateScoreDisplay() {
     if (scene.scoreText) {
         scene.scoreText.setText(`Kills: ${kills}`);
+    }
+}
+
+// Update botHitHusk to be the only kill handler
+function botHitHusk(bot, husk) {
+    // Only process if this hasn't been handled already
+    if (bot.isBeingDestroyed) return;
+    bot.isBeingDestroyed = true;
+
+    if (husk.isPlayerHusk) {
+        // Remove all husks created by this bot
+        const botHusks = husks.filter(h => h.isBotHusk && h.originalBot === bot);
+        botHusks.forEach(h => {
+            h.destroy();
+            husks = husks.filter(husk => husk !== h);
+        });
+
+        // Visual effect for death
+        scene.tweens.add({
+            targets: bot,
+            alpha: 0,
+            scale: 0,
+            duration: 200,
+            onComplete: () => {
+                bot.destroy();
+                bots = bots.filter(b => b !== bot);
+                
+                // Schedule new bot spawn after 3 seconds
+                if (!botRespawnTimer) {
+                    botRespawnTimer = scene.time.delayedCall(3000, () => {
+                        if (bots.length < TOTAL_BOTS) {
+                            createBot(scene);
+                        }
+                        botRespawnTimer = null;
+                    });
+                }
+            }
+        });
+
+        // Increment kills and show kill indicator
+        kills++;
+        
+        const killText = scene.add.text(bot.x, bot.y, '+1', {
+            fontSize: '24px',
+            fill: '#ff0000',
+            fontFamily: 'sans-serif',
+            fontWeight: 'bold'
+        }).setOrigin(0.5);
+        
+        scene.tweens.add({
+            targets: killText,
+            y: bot.y - 50,
+            alpha: 0,
+            duration: 1000,
+            onComplete: () => killText.destroy()
+        });
+        
+        updateScoreDisplay();
+    }
+    // Handle bot hitting another bot's husk
+    else if (husk.isBotHusk && husk.originalBot !== bot) {
+        // Same death effect for bot-bot collisions...
+        const botHusks = husks.filter(h => h.isBotHusk && h.originalBot === bot);
+        botHusks.forEach(h => {
+            h.destroy();
+            husks = husks.filter(husk => husk !== h);
+        });
+
+        scene.tweens.add({
+            targets: bot,
+            alpha: 0,
+            scale: 0,
+            duration: 200,
+            onComplete: () => {
+                bot.destroy();
+                bots = bots.filter(b => b !== bot);
+                
+                if (!botRespawnTimer) {
+                    botRespawnTimer = scene.time.delayedCall(3000, () => {
+                        if (bots.length < TOTAL_BOTS) {
+                            createBot(scene);
+                        }
+                        botRespawnTimer = null;
+                    });
+                }
+            }
+        });
     }
 } 
