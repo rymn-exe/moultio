@@ -1,6 +1,6 @@
 {
-  "name": "moultio",
-  "version": "1.0.0",
+  "name": "moult-io",
+  "version": "1.3.0",
   "description": "A multiplayer .io game",
   "main": "server.js",
   "scripts": {
@@ -10,11 +10,10 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "express": "^5.1.0",
-    "phaser": "^3.88.2",
-    "socket.io": "^4.8.1"
+    "express": "^4.17.1",
+    "socket.io": "^4.5.1"
   },
   "devDependencies": {
-    "nodemon": "^3.1.9"
+    "nodemon": "^2.0.15"
   }
 }
