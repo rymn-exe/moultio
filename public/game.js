@@ -23,7 +23,7 @@ const STANDARD_SPEED = 240;
 let kills = 0;
 let score = 0;
 const TOTAL_ORBS = 40;
-const TOTAL_BOTS = 15;
+const TOTAL_PLAYERS = 15;
 let botRespawnTimer = null;
 let playerUsername = '';
 let leaderboard = [];
@@ -45,7 +45,7 @@ const COLORS = [
     0x8338EC  // Purple
 ];
 
-const GAME_VERSION = '1.3.1';
+const GAME_VERSION = '1.3.3';
 
 const BOT_NAMES = [
     'xXDarkLordXx', 'ProGamer123', 'NoobMaster69', 'CoolKid2024', 
@@ -474,9 +474,6 @@ class GameScene extends Phaser.Scene {
     create() {
         scene = this;
         
-        // Initialize socket first
-        initializeSocket();
-        
         this.createBackground();
         
         // Set world bounds
@@ -496,12 +493,6 @@ class GameScene extends Phaser.Scene {
             strokeThickness: 3
         }).setOrigin(0.5);
         player.add(nameTag);
-        
-        // Emit player join after creating player
-        socket.emit('playerJoin', {
-            username: playerUsername,
-            color: playerColor
-        });
 
         // Setup camera
         this.cameras.main.setBounds(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
@@ -513,96 +504,6 @@ class GameScene extends Phaser.Scene {
         
         // Create UI elements
         this.createUI();
-        
-        // Set up movement update interval
-        this.time.addEvent({
-            delay: 50,
-            callback: () => {
-                if (!gameOver && player && player.body) {
-                    socket.emit('playerMove', {
-                        x: player.x,
-                        y: player.y
-                    });
-                }
-            },
-            loop: true
-        });
-
-        // Setup moulting with space key
-        const spaceKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
-        spaceKey.on('down', () => {
-            const currentThreshold = Math.floor(BASE_MOULT_THRESHOLD * (1 + (husksCreated * 0.1)));
-            if (!gameOver && moultMeter >= currentThreshold) {
-                // Create husk at player's current position
-                const husk = scene.add.container(player.x, player.y);
-                
-                // Make the husk color lighter than the player's color
-                const color = player.color;
-                const lighterColor = Phaser.Display.Color.ValueToColor(color).lighten(50).color;
-                
-                // Main body with multiple layers for better effect
-                const outerGlow = scene.add.circle(0, 0, 42, lighterColor, 0.3);
-                const body = scene.add.circle(0, 0, 34, lighterColor);
-                const innerGlow = scene.add.circle(0, 0, 30, lighterColor, 0.6);
-                
-                husk.add([outerGlow, body, innerGlow]);
-                scene.physics.add.existing(husk, true);
-                husk.body.setCircle(34);
-                husk.body.offset.x = -34;
-                husk.body.offset.y = -34;
-                
-                // Enhanced pulsing animation for player husks
-                scene.tweens.add({
-                    targets: [body, innerGlow],
-                    scaleX: 1.2,
-                    scaleY: 1.2,
-                    duration: 800,
-                    yoyo: true,
-                    repeat: -1,
-                    ease: 'Sine.easeInOut'
-                });
-
-                // Enhanced glow animation
-                scene.tweens.add({
-                    targets: outerGlow,
-                    scaleX: 1.4,
-                    scaleY: 1.4,
-                    alpha: 0.1,
-                    duration: 1000,
-                    yoyo: true,
-                    repeat: -1,
-                    ease: 'Sine.easeInOut'
-                });
-                
-                // Add a highlight ring that pulses independently
-                const highlightRing = scene.add.circle(0, 0, 36, 0xffffff, 0.3);
-                husk.add(highlightRing);
-                
-                scene.tweens.add({
-                    targets: highlightRing,
-                    scaleX: 1.3,
-                    scaleY: 1.3,
-                    alpha: 0,
-                    duration: 1200,
-                    repeat: -1,
-                    ease: 'Sine.easeInOut'
-                });
-                
-                husk.isPlayerHusk = true;
-                husk.playerId = 'player';
-                husks.push(husk);
-
-                // Add collision with bots
-                bots.forEach(bot => {
-                    scene.physics.add.overlap(bot, husk, botHitHusk, null, scene);
-                });
-
-                // Reset moult meter
-                moultMeter = 0;
-                husksCreated++;
-                updateMoultMeterText();
-            }
-        });
     }
 
     createBackground() {
@@ -748,8 +649,8 @@ class GameScene extends Phaser.Scene {
             createOrb(this);
         }
 
-        // Create initial bots
-        for (let i = 0; i < TOTAL_BOTS; i++) {
+        // Create initial bots (accounting for the human player)
+        for (let i = 0; i < TOTAL_PLAYERS - 1; i++) {  // -1 because we have one human player
             createBot(this);
         }
 
@@ -824,10 +725,8 @@ class GameScene extends Phaser.Scene {
         // Update leaderboard
         this.leaderboard.update();
 
-        // Periodically check bot count (every ~5 seconds)
-        if (this.time.now % 5000 < 16) {
-            manageBotCount();
-        }
+        // Check player count every frame
+        manageBotCount();
     }
 }
 
@@ -943,11 +842,6 @@ function createBotHusk(x, y, bot) {
 function checkPlayerDeath(player, husk) {
     if (!gameOver && (husk.isBotHusk || husk.isPlayerHusk)) {
         gameOver = true;
-        
-        // Emit death event to server
-        socket.emit('playerDeath', {
-            killerId: husk.playerId
-        });
         
         // Immediately disable everything
         scene.physics.world.disable(player);
@@ -1246,11 +1140,14 @@ function collectOrb(collector, orb) {
 }
 
 function createBot(scene) {
-    // Clean up any dead bots and invalid entries
+    // Clean up invalid bots first
     bots = bots.filter(bot => bot && !bot.isDestroyed && bot.body);
     
+    // Calculate total players including human player
+    const totalPlayers = bots.length + (gameOver ? 0 : 1);
+    
     // Don't create new bot if we're at or over the limit
-    if (bots.length >= TOTAL_BOTS) return null;
+    if (totalPlayers >= TOTAL_PLAYERS) return null;
     
     try {
         const x = Phaser.Math.Between(50, WORLD_WIDTH - 50);
@@ -1806,16 +1703,28 @@ function manageBotCount() {
     // Clean up invalid bots first
     bots = bots.filter(bot => bot && !bot.isDestroyed && bot.body);
     
-    // If we're below the target count and no respawn timer is active
-    if (bots.length < TOTAL_BOTS && !botRespawnTimer) {
-        botRespawnTimer = scene.time.delayedCall(3000, () => {
-            if (bots.length < TOTAL_BOTS) {
-                createBot(scene);
-            }
-            botRespawnTimer = null;
-            // Check again after spawning
-            manageBotCount();
-        });
+    // Calculate total players (bots + human player)
+    const totalPlayers = bots.length + (gameOver ? 0 : 1);  // Add 1 if player is alive
+    
+    // If we're below the target count
+    if (totalPlayers < TOTAL_PLAYERS) {
+        if (!botRespawnTimer) {
+            // Start timer for first missing bot
+            botRespawnTimer = scene.time.delayedCall(3000, () => {
+                const currentTotal = bots.length + (gameOver ? 0 : 1);
+                if (currentTotal < TOTAL_PLAYERS) {
+                    createBot(scene);
+                    
+                    // Immediately check if we need more bots
+                    botRespawnTimer = null;
+                    manageBotCount();
+                }
+            });
+        }
+    } else if (botRespawnTimer) {
+        // Cancel respawn timer if we're at or above the target
+        botRespawnTimer.remove();
+        botRespawnTimer = null;
     }
 }
 
