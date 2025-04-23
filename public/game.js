@@ -45,7 +45,7 @@ const COLORS = [
     0x8338EC  // Purple
 ];
 
-const GAME_VERSION = '1.3.3';
+const GAME_VERSION = '1.3.4';
 
 const BOT_NAMES = [
     'xXDarkLordXx', 'ProGamer123', 'NoobMaster69', 'CoolKid2024', 
@@ -68,6 +68,9 @@ const ORB_COLORS = [
     { core: 0xff7fff, glow: 0xff99ff }, // Soft Purple
     { core: 0xffbf7f, glow: 0xffcc99 }  // Soft Orange
 ];
+
+// Add Socket.IO client initialization
+let socket;
 
 // Define Scene classes first
 class StartScene extends Phaser.Scene {
@@ -504,6 +507,131 @@ class GameScene extends Phaser.Scene {
         
         // Create UI elements
         this.createUI();
+
+        // Initialize socket connection
+        socket = io();
+        
+        // Handle server events
+        socket.on('playerJoined', (newPlayer) => {
+            createOtherPlayer(this, newPlayer);
+        });
+        
+        socket.on('playerMoved', (playerData) => {
+            updateOtherPlayer(playerData);
+        });
+        
+        socket.on('playerLeft', (playerId) => {
+            removePlayer(playerId);
+        });
+        
+        // Emit player join event
+        socket.emit('playerJoin', {
+            username: playerUsername,
+            color: player.color
+        });
+        
+        // Set up movement update interval
+        this.time.addEvent({
+            delay: 50,  // Send position updates every 50ms
+            callback: () => {
+                if (player && !gameOver) {
+                    socket.emit('playerMove', {
+                        x: player.x,
+                        y: player.y
+                    });
+                }
+            },
+            loop: true
+        });
+
+        // Add space key handler for moulting
+        const spaceKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
+        spaceKey.on('down', () => {
+            const currentThreshold = Math.floor(BASE_MOULT_THRESHOLD * (1 + (husksCreated * 0.1)));
+            if (moultMeter >= currentThreshold && !gameOver) {
+                // Create player husk at current position
+                const husk = scene.add.container(player.x, player.y);
+                
+                // Make husk significantly lighter than player color (increased lightness)
+                const lighterColor = Phaser.Display.Color.ValueToColor(player.color).lighten(50).color;
+                
+                // Create husk layers with larger initial size for more evident pulsing
+                const outerGlow = scene.add.circle(0, 0, 48, lighterColor, 0.2);
+                const body = scene.add.circle(0, 0, 40, lighterColor, 0.8);
+                const innerGlow = scene.add.circle(0, 0, 36, lighterColor, 0.4);
+                const core = scene.add.circle(0, 0, 32, lighterColor, 0.6);
+                
+                // Add highlight effects
+                const highlight1 = scene.add.circle(-12, -12, 10, 0xffffff, 0.4);
+                const highlight2 = scene.add.circle(-8, -8, 6, 0xffffff, 0.6);
+                
+                husk.add([outerGlow, body, innerGlow, core, highlight1, highlight2]);
+                scene.physics.add.existing(husk, true);
+                husk.body.setCircle(32);
+                husk.body.offset.x = -32;
+                husk.body.offset.y = -32;
+                
+                // Enhanced pulse animation
+                scene.tweens.add({
+                    targets: [outerGlow, body, innerGlow, core],
+                    scaleX: 1.2,
+                    scaleY: 1.2,
+                    duration: 800,
+                    yoyo: true,
+                    repeat: -1,
+                    ease: 'Sine.easeInOut'
+                });
+                
+                // Add rotating highlight effect
+                scene.tweens.add({
+                    targets: [highlight1, highlight2],
+                    angle: 360,
+                    duration: 3000,
+                    repeat: -1,
+                    ease: 'Linear'
+                });
+                
+                // Add additional glow pulse
+                const glowEffect = scene.add.circle(0, 0, 50, lighterColor, 0.2);
+                husk.add(glowEffect);
+                
+                scene.tweens.add({
+                    targets: glowEffect,
+                    scaleX: 1.3,
+                    scaleY: 1.3,
+                    alpha: 0.1,
+                    duration: 1000,
+                    yoyo: true,
+                    repeat: -1,
+                    ease: 'Sine.easeInOut'
+                });
+                
+                husk.isPlayerHusk = true;
+                husks.push(husk);
+                husksCreated++;
+                
+                // Add collision with bots
+                bots.forEach(bot => {
+                    scene.physics.add.overlap(bot, husk, botHitHusk, null, scene);
+                });
+                
+                // Reset moult meter
+                moultMeter = 0;
+                updateMoultMeterText();
+                
+                // Add a more prominent flash effect
+                const flash = scene.add.circle(husk.x, husk.y, 60, lighterColor, 0.8);
+                flash.setDepth(1000);
+                scene.tweens.add({
+                    targets: flash,
+                    scale: 2.5,
+                    alpha: 0,
+                    duration: 400,
+                    ease: 'Power2',
+                    onComplete: () => flash.destroy()
+                });
+            }
+        });
     }
 
     createBackground() {
@@ -806,16 +934,27 @@ function createPlayerHusk(x, y) {
 function createBotHusk(x, y, bot) {
     const husk = scene.add.container(x, y);
     
-    // Make bot husks lighter than their original color
-    const color = bot.color;
-    const lighterColor = Phaser.Display.Color.ValueToColor(color).lighten(30).color;
+    // Make bot husks lighter than their original color (increased lightness)
+    const lighterColor = Phaser.Display.Color.ValueToColor(bot.color).lighten(50).color;
     
-    // Simpler, non-animated layers for bot husks
-    const outerGlow = scene.add.circle(0, 0, 40, lighterColor, 0.15);
-    const body = scene.add.circle(0, 0, 32, lighterColor, 0.8);
-    const innerGlow = scene.add.circle(0, 0, 28, lighterColor, 0.4);
+    // Create husk layers
+    const outerGlow = scene.add.circle(0, 0, 44, lighterColor, 0.15);
+    const body = scene.add.circle(0, 0, 36, lighterColor, 0.8);
+    const innerGlow = scene.add.circle(0, 0, 32, lighterColor, 0.4);
+    const core = scene.add.circle(0, 0, 28, lighterColor, 0.6);
     
-    husk.add([outerGlow, body, innerGlow]);
+    // Add subtle pulse animation for bot husks
+    scene.tweens.add({
+        targets: [outerGlow, body, innerGlow, core],
+        scaleX: 1.1,
+        scaleY: 1.1,
+        duration: 2000,
+        yoyo: true,
+        repeat: -1,
+        ease: 'Sine.easeInOut'
+    });
+    
+    husk.add([outerGlow, body, innerGlow, core]);
     scene.physics.add.existing(husk, true);
     husk.body.setCircle(32);
     husk.body.offset.x = -32;
@@ -1725,6 +1864,43 @@ function manageBotCount() {
         // Cancel respawn timer if we're at or above the target
         botRespawnTimer.remove();
         botRespawnTimer = null;
+    }
+}
+
+// Add these new functions to handle other players
+function createOtherPlayer(scene, playerData) {
+    const otherPlayer = createBlob(scene, playerData.x, playerData.y, playerData.color);
+    otherPlayer.playerId = playerData.id;
+    otherPlayer.add(scene.add.text(0, -50, playerData.username, {
+        fontSize: '16px',
+        fill: '#ffffff',
+        fontFamily: 'Verdana, sans-serif',
+        stroke: '#000000',
+        strokeThickness: 3
+    }).setOrigin(0.5));
+    
+    otherPlayers.set(playerData.id, otherPlayer);
+}
+
+function updateOtherPlayer(playerData) {
+    const otherPlayer = otherPlayers.get(playerData.id);
+    if (otherPlayer) {
+        // Interpolate movement for smoothness
+        scene.tweens.add({
+            targets: otherPlayer,
+            x: playerData.x,
+            y: playerData.y,
+            duration: 50,
+            ease: 'Linear'
+        });
+    }
+}
+
+function removePlayer(playerId) {
+    const otherPlayer = otherPlayers.get(playerId);
+    if (otherPlayer) {
+        otherPlayer.destroy();
+        otherPlayers.delete(playerId);
     }
 }
 
